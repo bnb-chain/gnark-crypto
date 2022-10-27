@@ -107,6 +107,24 @@ func NewElement(v uint64) Element {
 	return z
 }
 
+func Zero() *Element {
+	return &Element{0,0,0,0}
+}
+
+func FromBigInt(v *big.Int) *Element {
+	e := Element{0,0,0,0}
+	e.SetBigInt(v)
+	return &e
+}
+
+func FromHex(v string) *Element {
+	n, success := new(big.Int).SetString(v, 16)
+	if !success {
+		panic("Error parsing hex number")
+	}
+	return FromBigInt(n)
+}
+
 // SetUint64 sets z to v and returns z
 func (z *Element) SetUint64(v uint64) *Element {
 	//  sets z LSB to v (non-Montgomery form) and convert z to Montgomery form
