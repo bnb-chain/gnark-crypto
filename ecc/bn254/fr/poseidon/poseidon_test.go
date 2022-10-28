@@ -42,6 +42,19 @@ func TestPoseidonFour(t *testing.T) {
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
+func TestPoseidon24(t *testing.T) {
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromHexString("612D378F91DC3422E6C60E54D24E3FA6D8000F0E47CDACE9BDB304506E3C9D3")
+	length := 24
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
+	}
+	actualHash := Poseidon(inputs...)
+	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
+}
+
 func TestPoseidonThirty(t *testing.T) {
 	// WARNING: No test vector to compare with
 	expectedHash := elementFromHexString("140CEA90C05A04C7140337789BD4CDE38BA73EE1988D34533F3F8F7B6AAC5675")

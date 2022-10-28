@@ -10,6 +10,16 @@ func zeroElement() *fr.Element {
 	return &fr.Element{0, 0, 0, 0}
 }
 
+func deepCopy(dst, src []*fr.Element) {
+	if len(src) > len(dst) {
+		panic("Cannot copy to a smaller destination")
+	}
+	for i := 0; i < len(src); i++ {
+		v := *src[i]
+		dst[i] = &v
+	}
+}
+
 // MDS matrix multiply mds * state
 func mix(state []*fr.Element) []*fr.Element {
 	width := len(state)
@@ -68,16 +78,6 @@ func permutation(state []*fr.Element) []*fr.Element {
 	return state
 }
 
-func deepCopy(dst, src []*fr.Element) {
-	if len(src) > len(dst) {
-		panic("Cannot copy to a smaller destination")
-	}
-	for i := 0; i < len(src); i++ {
-		v := *src[i]
-		dst[i] = &v
-	}
-}
-
 func Poseidon(input ...*fr.Element) *fr.Element {
 	inputLength := len(input)
 	// No support for hashing inputs of length less than 2
@@ -103,9 +103,11 @@ func Poseidon(input ...*fr.Element) *fr.Element {
 	}
 
 	// For the remaining part of the input OR if 2 <= inputLength <= 12
+	if lastIndex < inputLength {
 	lastIndex = inputLength
 	remainigLength := lastIndex - startIndex
 	deepCopy(state[1:], input[startIndex:lastIndex])
 	state = permutation(state[:remainigLength+1])
+	}
 	return state[0]
 }
