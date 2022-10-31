@@ -1,9 +1,16 @@
 package poseidon
 
 import (
+	"errors"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/poseidon/constants"
+	"hash"
+	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+)
+
+const (
+	BlockSize = fr.Bytes // BlockSize size that mimc consumes
 )
 
 func zeroElement() *fr.Element {
@@ -104,10 +111,74 @@ func Poseidon(input ...*fr.Element) *fr.Element {
 
 	// For the remaining part of the input OR if 2 <= inputLength <= 12
 	if lastIndex < inputLength {
-	lastIndex = inputLength
-	remainigLength := lastIndex - startIndex
-	deepCopy(state[1:], input[startIndex:lastIndex])
-	state = permutation(state[:remainigLength+1])
+		lastIndex = inputLength
+		remainigLength := lastIndex - startIndex
+		deepCopy(state[1:], input[startIndex:lastIndex])
+		state = permutation(state[:remainigLength+1])
 	}
 	return state[0]
+}
+
+func PoseidonBytes(input ...[]byte) []byte {
+	inputElements := make([]*fr.Element, len(input))
+	for i, ele := range input {
+		num := new(big.Int).SetBytes(ele)
+		if num.Cmp(fr.Modulus()) >= 0 {
+			panic("not support bytes bigger than modulus")
+		}
+		e := fr.Element{0, 0, 0, 0}
+		e.SetBigInt(new(big.Int).SetBytes(ele))
+		inputElements[i] = &e
+	}
+	res := Poseidon(inputElements...).Bytes()
+	return res[:]
+}
+
+type digest struct {
+	h    fr.Element
+	data [][]byte // data to hash
+}
+
+func NewPoseidon() hash.Hash {
+	d := new(digest)
+	d.Reset()
+	return d
+}
+
+// Reset resets the Hash to its initial state.
+func (d *digest) Reset() {
+	d.data = nil
+	d.h = fr.Element{0, 0, 0, 0}
+}
+
+// Only receive byte slice less than fr.Modulus()
+func (d *digest) Write(p []byte) (n int, err error) {
+	n = len(p)
+	num := new(big.Int).SetBytes(p)
+	if num.Cmp(fr.Modulus()) >= 0 {
+		return 0, errors.New("not support bytes bigger than modulus")
+	}
+	d.data = append(d.data, p)
+	return n, nil
+}
+
+func (d *digest) Size() int {
+	return BlockSize
+}
+
+// BlockSize returns the number of bytes Sum will return.
+func (d *digest) BlockSize() int {
+	return BlockSize
+}
+
+// Sum appends the current hash to b and returns the resulting slice.
+// It does not change the underlying hash state.
+func (d *digest) Sum(b []byte) []byte {
+	e := fr.Element{0, 0, 0, 0}
+	e.SetBigInt(new(big.Int).SetBytes(PoseidonBytes(d.data...)))
+	d.h = e
+	d.data = nil // flush the data already hashed
+	hash := d.h.Bytes()
+	b = append(b, hash[:]...)
+	return b
 }
