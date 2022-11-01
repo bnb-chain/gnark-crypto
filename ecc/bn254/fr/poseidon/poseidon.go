@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	BlockSize = fr.Bytes // BlockSize size that mimc consumes
+	BlockSize = fr.Bytes // BlockSize size that poseidon consumes
 )
 
 func zeroElement() *fr.Element {
@@ -127,7 +127,7 @@ func PoseidonBytes(input ...[]byte) []byte {
 			panic("not support bytes bigger than modulus")
 		}
 		e := fr.Element{0, 0, 0, 0}
-		e.SetBigInt(new(big.Int).SetBytes(ele))
+		e.SetBigInt(num)
 		inputElements[i] = &e
 	}
 	res := Poseidon(inputElements...).Bytes()
