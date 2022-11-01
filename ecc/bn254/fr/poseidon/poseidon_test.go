@@ -80,3 +80,40 @@ func TestConsistency(t *testing.T) {
 	actualHash2 := Poseidon(inputs...)
 	assert.True(t, actualHash1.Equal(actualHash2), "%s != %s", actualHash1, actualHash2)
 }
+
+func TestPoseidonBytes(t *testing.T) {
+	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
+	expectedHash := elementFromHexString("115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a")
+	inputs := make([][]byte, 2)
+	inputs[0] = make([]byte, 1)
+	inputs[0][0] = 1
+	inputs[1] = make([]byte, 1)
+	inputs[1][0] = 2
+	actualHash := PoseidonBytes(inputs...)
+	actualHashEle := fr.Element{0, 0, 0, 0}
+	actualHashEle.SetBytes(actualHash)
+	assert.True(t, actualHashEle.Equal(expectedHash), "%s != %s", actualHashEle, expectedHash)
+}
+
+func TestDigest(t *testing.T) {
+	expectedHash := elementFromHexString("115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a")
+	hFunc := NewPoseidon()
+	inputs := make([][]byte, 2)
+	inputs[0] = make([]byte, 1)
+	inputs[0][0] = 1
+	inputs[1] = make([]byte, 1)
+	inputs[1][0] = 2
+	hFunc.Write(inputs[0])
+	hFunc.Write(inputs[1])
+	actualHash := hFunc.Sum(nil)
+	actualHashEle := fr.Element{0, 0, 0, 0}
+	actualHashEle.SetBytes(actualHash)
+	assert.True(t, actualHashEle.Equal(expectedHash), "%s != %s", actualHashEle, expectedHash)
+
+	hFunc.Reset()
+	bigNumber, _ := new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+	inputs[0] = bigNumber.Bytes()
+	n, err := hFunc.Write(inputs[0])
+	assert.EqualError(t, err, "not support bytes bigger than modulus")
+	assert.Equal(t, n, 0)
+}
