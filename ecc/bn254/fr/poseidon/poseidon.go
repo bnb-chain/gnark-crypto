@@ -2,7 +2,6 @@ package poseidon
 
 import (
 	"errors"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/poseidon/constants"
 	"hash"
 	"math/big"
 
@@ -27,69 +26,93 @@ func deepCopy(dst, src []*fr.Element) {
 	}
 }
 
-// MDS matrix multiply mds * state
-func mix(state []*fr.Element) []*fr.Element {
-	width := len(state)
-	index := width - 3
-	newState := make([]*fr.Element, width)
-	for i := 0; i < width; i++ {
-		acc := zeroElement()
-		for j := 0; j < width; j++ {
-			acc.Add(acc, zeroElement().Mul(constants.MDS[index][i][j], state[j]))
+// Add round constants
+func arc(state []*fr.Element, C []*fr.Element, t, offset int) {
+	for i := 0; i < t; i++ {
+		state[i].Add(state[i], C[offset+i])
+	}
+}
+
+// power 5 as s-box for full state
+func sbox(state []*fr.Element, t int) {
+	for i := 0; i < t; i++ {
+		state[i].Exp(*state[i], alpha)
+	}
+}
+
+// Matrix vector multiplication
+func mix(state []*fr.Element, M [][]*fr.Element, t int) []*fr.Element {
+	newState := make([]*fr.Element, t)
+
+	for i := 0; i < t; i++ {
+		newState[i] = zeroElement()
+		for j := 0; j < t; j++ {
+			newState[i].Add(newState[i], zeroElement().Mul(M[j][i], state[j]))
 		}
-		newState[i] = acc
 	}
 	return newState
 }
 
-func fullRounds(state []*fr.Element, roundCounter *int) []*fr.Element {
-	width := len(state)
-	index := width - 3
-	rf := constants.RF / 2
-	for i := 0; i < rf; i++ {
-		for j := 0; j < width; j++ {
-			// Add round constants
-			state[j].Add(state[j], constants.RC[index][*roundCounter])
-			*roundCounter += 1
-			// Apply full s-box
-			state[j].Exp(*state[j], constants.Alpha)
-		}
-		// Apply mix layer
-		state = mix(state)
-	}
-	return state
-}
-
-func partialRounds(state []*fr.Element, roundCounter *int) []*fr.Element {
-	width := len(state)
-	index := width - 3
-	for i := 0; i < constants.RP[index]; i++ {
-		for j := 0; j < width; j++ {
-			// Add round constants
-			state[j].Add(state[j], constants.RC[index][*roundCounter])
-			*roundCounter += 1
-		}
-		// Apply single s-box
-		state[0].Exp(*state[0], constants.Alpha)
-		// Apply mix layer
-		state = mix(state)
-	}
-	return state
-}
-
 func permutation(state []*fr.Element) []*fr.Element {
-	roundCounter := 0
-	state = fullRounds(state, &roundCounter)
-	state = partialRounds(state, &roundCounter)
-	state = fullRounds(state, &roundCounter)
+	// Minimum length of state = nInput + nOutput = 2
+	t := len(state)
+	index := t - 2
+	RP := rp[index]
+	C := c[index]
+	M := m[index]
+	S := s[index]
+	P := p[index]
+
+	// 1. Pre-step to the first-half of full rounds: add round constant for round=0
+	arc(state, C, t, 0)
+
+	// 2. First-half of full rounds starting at roundNumber = 1 except last round
+	for i := 0; i < rf/2-1; i++ {
+		sbox(state, t)
+		arc(state, C, t, (i+1)*t)
+		state = mix(state, M, t)
+	}
+
+	// 3. Last round of first-half of full rounds
+	sbox(state, t)
+	arc(state, C, t, (rf/2)*t)
+	state = mix(state, P, t)
+
+	// 4. Partial rounds
+	for i := 0; i < RP; i++ {
+		state[0].Exp(*state[0], alpha)
+		state[0].Add(state[0], C[(rf/2+1)*t+i])
+		// S[i] is a vector of [t*2-1] elements where first t elements are used to compute state[0]
+		// and the remaining elements starting at [t] are used to compute state[1,..,t-1]
+		offset := (t*2 - 1) * i
+		newState0 := zeroElement()
+		for j := 0; j < len(state); j++ {
+			newState0.Add(newState0, zeroElement().Mul(state[j], S[offset+j]))
+		}
+		offset += t - 1
+		for k := 1; k < t; k++ {
+			state[k].Add(state[k], zeroElement().Mul(state[0], S[offset+k]))
+		}
+		state[0] = newState0
+	}
+
+	// 5. Second-half of full rounds except last round
+	for i := 0; i < rf/2-1; i++ {
+		sbox(state, t)
+		arc(state, C, t, (rf/2+1)*t+RP+i*t)
+		state = mix(state, M, t)
+	}
+
+	// 6. Last round of the second-half of full rounds
+	sbox(state, t)
+	state = mix(state, M, t)
 	return state
 }
 
 func Poseidon(input ...*fr.Element) *fr.Element {
 	inputLength := len(input)
-	// No support for hashing inputs of length less than 2
-	if inputLength < 2 {
-		panic("Not supported input size")
+	if inputLength == 0 {
+		panic("No support for dummy input")
 	}
 
 	const maxLength = 12
