@@ -19,11 +19,13 @@ package bn254
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/internal/fptower"
 	"io"
 	"reflect"
+	"time"
 )
 
 // To encode G1Affine and G2Affine points, we mask the most significant bits with these bits to specify without ambiguity
@@ -512,6 +514,7 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 		return nil
 
 	case []G1Affine:
+		start := time.Now()
 		// write slice length
 		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
 		if err != nil {
@@ -529,7 +532,42 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 				return
 			}
 		}
+		fmt.Println("TODO write []G1 time", time.Since(start))
 		return nil
+
+		// start := time.Now()
+		// remain := len(t)
+		// var bufs [bufSz][SizeOfG1AffineUncompressed]byte
+
+		// offset := 0
+		// for {
+		// 	if remain == 0 {
+		// 		break
+		// 	}
+		// 	toWrite := bufSz
+		// 	if toWrite > remain {
+		// 		toWrite = remain
+		// 	}
+		// 	remain -= toWrite
+		// 	parallel.Execute(toWrite, func(start, end int) {
+		// 		for i := start; i < end; i++ {
+		// 			bufs[i] = t[i+offset].RawBytes()
+		// 		}
+		// 	})
+		// 	var bufAll []byte
+		// 	for _, buf := range bufs {
+		// 		bufAll = append(bufAll, buf[:]...)
+		// 	}
+		// 	written, err = enc.w.Write(bufAll)
+		// 	enc.n += int64(written)
+		// 	if err != nil {
+		// 		return
+		// 	}
+		// 	offset += toWrite
+		// }
+		// fmt.Println("TODO write []G1 time", time.Since(start))
+		// return nil
+
 	case []G2Affine:
 		// write slice length
 		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
