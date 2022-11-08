@@ -19,13 +19,12 @@ package bn254
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/internal/fptower"
+	"github.com/consensys/gnark-crypto/internal/parallel"
 	"io"
 	"reflect"
-	"time"
 )
 
 // To encode G1Affine and G2Affine points, we mask the most significant bits with these bits to specify without ambiguity
@@ -514,59 +513,45 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 		return nil
 
 	case []G1Affine:
-		start := time.Now()
 		// write slice length
 		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
 		if err != nil {
 			return
 		}
+
 		enc.n += 4
+		remain := len(t)
+		var bufs [bufSz][SizeOfG1AffineUncompressed]byte
 
-		var buf [SizeOfG1AffineUncompressed]byte
-
-		for i := 0; i < len(t); i++ {
-			buf = t[i].RawBytes()
-			written, err = enc.w.Write(buf[:])
+		offset := 0
+		for {
+			if remain == 0 {
+				break
+			}
+			toWrite := bufSz
+			if toWrite > remain {
+				toWrite = remain
+			}
+			remain -= toWrite
+			parallel.Execute(toWrite, func(start, end int) {
+				for i := start; i < end; i++ {
+					bufs[i] = t[i+offset].RawBytes()
+				}
+			})
+			var bufAll []byte
+			for i, _ := range bufs {
+				if i < toWrite {
+					bufAll = append(bufAll, bufs[i][:]...)
+				}
+			}
+			written, err = enc.w.Write(bufAll)
 			enc.n += int64(written)
 			if err != nil {
 				return
 			}
+			offset += toWrite
 		}
-		fmt.Println("TODO write []G1 time", time.Since(start))
 		return nil
-
-		// start := time.Now()
-		// remain := len(t)
-		// var bufs [bufSz][SizeOfG1AffineUncompressed]byte
-
-		// offset := 0
-		// for {
-		// 	if remain == 0 {
-		// 		break
-		// 	}
-		// 	toWrite := bufSz
-		// 	if toWrite > remain {
-		// 		toWrite = remain
-		// 	}
-		// 	remain -= toWrite
-		// 	parallel.Execute(toWrite, func(start, end int) {
-		// 		for i := start; i < end; i++ {
-		// 			bufs[i] = t[i+offset].RawBytes()
-		// 		}
-		// 	})
-		// 	var bufAll []byte
-		// 	for _, buf := range bufs {
-		// 		bufAll = append(bufAll, buf[:]...)
-		// 	}
-		// 	written, err = enc.w.Write(bufAll)
-		// 	enc.n += int64(written)
-		// 	if err != nil {
-		// 		return
-		// 	}
-		// 	offset += toWrite
-		// }
-		// fmt.Println("TODO write []G1 time", time.Since(start))
-		// return nil
 
 	case []G2Affine:
 		// write slice length
@@ -575,18 +560,39 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 			return
 		}
 		enc.n += 4
+		remain := len(t)
+		var bufs [bufSz][SizeOfG2AffineUncompressed]byte
 
-		var buf [SizeOfG2AffineUncompressed]byte
-
-		for i := 0; i < len(t); i++ {
-			buf = t[i].RawBytes()
-			written, err = enc.w.Write(buf[:])
+		offset := 0
+		for {
+			if remain == 0 {
+				break
+			}
+			toWrite := bufSz
+			if toWrite > remain {
+				toWrite = remain
+			}
+			remain -= toWrite
+			parallel.Execute(toWrite, func(start, end int) {
+				for i := start; i < end; i++ {
+					bufs[i] = t[i+offset].RawBytes()
+				}
+			})
+			var bufAll []byte
+			for i, _ := range bufs {
+				if i < toWrite {
+					bufAll = append(bufAll, bufs[i][:]...)
+				}
+			}
+			written, err = enc.w.Write(bufAll)
 			enc.n += int64(written)
 			if err != nil {
 				return
 			}
+			offset += toWrite
 		}
 		return nil
+
 	default:
 		n := binary.Size(t)
 		if n == -1 {
