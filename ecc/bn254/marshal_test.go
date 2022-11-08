@@ -66,14 +66,15 @@ func TestEncoder(t *testing.T) {
 	inJ = make([]fr.Element, 0)
 
 	// encode them, compressed and raw
-	var buf, bufRaw bytes.Buffer
-	enc := NewEncoder(&buf)
+	// var buf, bufRaw bytes.Buffer
+	// enc := NewEncoder(&buf)
+	var bufRaw bytes.Buffer
 	encRaw := NewEncoder(&bufRaw, RawEncoding())
 	toEncode := []interface{}{inA, &inB, &inC, &inD, &inE, &inF, inG, inH, inI, inJ}
 	for _, v := range toEncode {
-		if err := enc.Encode(v); err != nil {
-			t.Fatal(err)
-		}
+		// if err := enc.Encode(v); err != nil {
+		// 	t.Fatal(err)
+		// }
 		if err := encRaw.Encode(v); err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +138,7 @@ func TestEncoder(t *testing.T) {
 	}
 
 	// decode them
-	testDecode(t, &buf, enc.BytesWritten())
+	// testDecode(t, &buf, enc.BytesWritten())
 	testDecode(t, &bufRaw, encRaw.BytesWritten())
 
 }
