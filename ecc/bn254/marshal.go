@@ -19,14 +19,12 @@ package bn254
 import (
 	"encoding/binary"
 	"errors"
-	"io"
-	"reflect"
-	"sync/atomic"
-
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/internal/fptower"
 	"github.com/consensys/gnark-crypto/internal/parallel"
+	"io"
+	"reflect"
 )
 
 // To encode G1Affine and G2Affine points, we mask the most significant bits with these bits to specify without ambiguity
@@ -39,6 +37,7 @@ const (
 	mCompressedSmallest byte = 0b10 << 6
 	mCompressedLargest  byte = 0b11 << 6
 	mCompressedInfinity byte = 0b01 << 6
+	bufSz               int  = 0b01 << 22
 )
 
 // SizeOfGT represents the size in bytes that a GT element need in binary form
@@ -80,9 +79,16 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 
 	// implementation note: code is a bit verbose (abusing code generation), but minimize allocations on the heap
 	// in particular, careful attention must be given to usage of Bytes() method on Elements and Points
-	// that return an array (not a slice) of bytes. Using this is beneficial to minimize memallocs
+	// that return an array (not a slice) of bytes. Using this is beneficial to minimize memory allocations
 	// in very large (de)serialization upstream in gnark.
-	// (but detrimental to code lisibility here)
+	// (but detrimental to code readability here)
+
+	var read64 int64
+	if vf, ok := v.(io.ReaderFrom); ok {
+		read64, err = vf.ReadFrom(dec.r)
+		dec.n += read64
+		return
+	}
 
 	var buf [SizeOfG2AffineUncompressed]byte
 	var read int
@@ -94,7 +100,7 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 		if err != nil {
 			return
 		}
-		t.SetBytes(buf[:fr.Bytes])
+		err = t.SetBytesCanonical(buf[:fr.Bytes])
 		return
 	case *fp.Element:
 		read, err = io.ReadFull(dec.r, buf[:fp.Bytes])
@@ -102,45 +108,15 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 		if err != nil {
 			return
 		}
-		t.SetBytes(buf[:fp.Bytes])
+		err = t.SetBytesCanonical(buf[:fp.Bytes])
 		return
 	case *[]fr.Element:
-		var sliceLen uint32
-		sliceLen, err = dec.readUint32()
-		if err != nil {
-			return
-		}
-		if len(*t) != int(sliceLen) {
-			*t = make([]fr.Element, sliceLen)
-		}
-
-		for i := 0; i < len(*t); i++ {
-			read, err = io.ReadFull(dec.r, buf[:fr.Bytes])
-			dec.n += int64(read)
-			if err != nil {
-				return
-			}
-			(*t)[i].SetBytes(buf[:fr.Bytes])
-		}
+		read64, err = (*fr.Vector)(t).ReadFrom(dec.r)
+		dec.n += read64
 		return
 	case *[]fp.Element:
-		var sliceLen uint32
-		sliceLen, err = dec.readUint32()
-		if err != nil {
-			return
-		}
-		if len(*t) != int(sliceLen) {
-			*t = make([]fp.Element, sliceLen)
-		}
-
-		for i := 0; i < len(*t); i++ {
-			read, err = io.ReadFull(dec.r, buf[:fp.Bytes])
-			dec.n += int64(read)
-			if err != nil {
-				return
-			}
-			(*t)[i].SetBytes(buf[:fp.Bytes])
-		}
+		read64, err = (*fp.Vector)(t).ReadFrom(dec.r)
+		dec.n += read64
 		return
 	case *G1Affine:
 		// we start by reading compressed point size, if metadata tells us it is uncompressed, we read more.
@@ -191,51 +167,33 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 		if len(*t) != int(sliceLen) {
 			*t = make([]G1Affine, sliceLen)
 		}
-		compressed := make([]bool, sliceLen)
-		for i := 0; i < len(*t); i++ {
-
-			// we start by reading compressed point size, if metadata tells us it is uncompressed, we read more.
-			read, err = io.ReadFull(dec.r, buf[:SizeOfG1AffineCompressed])
+		remain := int(sliceLen)
+		offset := 0
+		var bufAll [SizeOfG1AffineUncompressed * bufSz]byte
+		for {
+			if remain == 0 {
+				break
+			}
+			toRead := bufSz
+			if toRead > remain {
+				toRead = remain
+			}
+			remain -= toRead
+			nbBytes := SizeOfG1AffineUncompressed * toRead
+			read, err = io.ReadFull(dec.r, bufAll[:nbBytes])
 			dec.n += int64(read)
 			if err != nil {
-				return
+				return err
 			}
-			nbBytes := SizeOfG1AffineCompressed
-			// most significant byte contains metadata
-			if !isCompressed(buf[0]) {
-				nbBytes = SizeOfG1AffineUncompressed
-				// we read more.
-				read, err = io.ReadFull(dec.r, buf[SizeOfG1AffineCompressed:SizeOfG1AffineUncompressed])
-				dec.n += int64(read)
+			for i := 0; i < toRead; i++ {
+				_, err = (*t)[i+offset].setBytes(bufAll[i*SizeOfG1AffineUncompressed:(i+1)*SizeOfG1AffineUncompressed], false)
 				if err != nil {
-					return
-				}
-				_, err = (*t)[i].setBytes(buf[:nbBytes], false)
-				if err != nil {
-					return
-				}
-			} else {
-				compressed[i] = !((*t)[i].unsafeSetCompressedBytes(buf[:nbBytes]))
-			}
-		}
-		var nbErrs uint64
-		parallel.Execute(len(compressed), func(start, end int) {
-			for i := start; i < end; i++ {
-				if compressed[i] {
-					if err := (*t)[i].unsafeComputeY(dec.subGroupCheck); err != nil {
-						atomic.AddUint64(&nbErrs, 1)
-					}
-				} else if dec.subGroupCheck {
-					if !(*t)[i].IsInSubGroup() {
-						atomic.AddUint64(&nbErrs, 1)
-					}
+					return err
 				}
 			}
-		})
-		if nbErrs != 0 {
-			return errors.New("point decompression failed")
-		}
+			offset += toRead
 
+		}
 		return nil
 	case *[]G2Affine:
 		var sliceLen uint32
@@ -246,51 +204,34 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 		if len(*t) != int(sliceLen) {
 			*t = make([]G2Affine, sliceLen)
 		}
-		compressed := make([]bool, sliceLen)
-		for i := 0; i < len(*t); i++ {
+		remain := int(sliceLen)
+		offset := 0
+		var bufAll [SizeOfG2AffineUncompressed * bufSz]byte
+		for {
+			if remain == 0 {
+				break
+			}
 
-			// we start by reading compressed point size, if metadata tells us it is uncompressed, we read more.
-			read, err = io.ReadFull(dec.r, buf[:SizeOfG2AffineCompressed])
+			toRead := bufSz
+			if toRead > remain {
+				toRead = remain
+			}
+			remain -= toRead
+			nbBytes := SizeOfG2AffineUncompressed * toRead
+			read, err = io.ReadFull(dec.r, bufAll[:nbBytes])
 			dec.n += int64(read)
 			if err != nil {
-				return
+				return err
 			}
-			nbBytes := SizeOfG2AffineCompressed
-			// most significant byte contains metadata
-			if !isCompressed(buf[0]) {
-				nbBytes = SizeOfG2AffineUncompressed
-				// we read more.
-				read, err = io.ReadFull(dec.r, buf[SizeOfG2AffineCompressed:SizeOfG2AffineUncompressed])
-				dec.n += int64(read)
+			for i := 0; i < toRead; i++ {
+				_, err = (*t)[i+offset].setBytes(bufAll[i*SizeOfG2AffineUncompressed:(i+1)*SizeOfG2AffineUncompressed], false)
 				if err != nil {
-					return
-				}
-				_, err = (*t)[i].setBytes(buf[:nbBytes], false)
-				if err != nil {
-					return
-				}
-			} else {
-				compressed[i] = !((*t)[i].unsafeSetCompressedBytes(buf[:nbBytes]))
-			}
-		}
-		var nbErrs uint64
-		parallel.Execute(len(compressed), func(start, end int) {
-			for i := start; i < end; i++ {
-				if compressed[i] {
-					if err := (*t)[i].unsafeComputeY(dec.subGroupCheck); err != nil {
-						atomic.AddUint64(&nbErrs, 1)
-					}
-				} else if dec.subGroupCheck {
-					if !(*t)[i].IsInSubGroup() {
-						atomic.AddUint64(&nbErrs, 1)
-					}
+					return err
 				}
 			}
-		})
-		if nbErrs != 0 {
-			return errors.New("point decompression failed")
-		}
+			offset += toRead
 
+		}
 		return nil
 	default:
 		n := binary.Size(t)
@@ -382,7 +323,15 @@ func (enc *Encoder) encode(v interface{}) (err error) {
 
 	// implementation note: code is a bit verbose (abusing code generation), but minimize allocations on the heap
 
+	var written64 int64
+	if vw, ok := v.(io.WriterTo); ok {
+		written64, err = vw.WriteTo(enc.w)
+		enc.n += written64
+		return
+	}
+
 	var written int
+
 	switch t := v.(type) {
 	case *fr.Element:
 		buf := t.Bytes()
@@ -404,41 +353,22 @@ func (enc *Encoder) encode(v interface{}) (err error) {
 		written, err = enc.w.Write(buf[:])
 		enc.n += int64(written)
 		return
+	case fr.Vector:
+		written64, err = t.WriteTo(enc.w)
+		enc.n += written64
+		return
+	case fp.Vector:
+		written64, err = t.WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []fr.Element:
-		// write slice length
-		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
-		if err != nil {
-			return
-		}
-		enc.n += 4
-		var buf [fr.Bytes]byte
-		for i := 0; i < len(t); i++ {
-			buf = t[i].Bytes()
-			written, err = enc.w.Write(buf[:])
-			enc.n += int64(written)
-			if err != nil {
-				return
-			}
-		}
-		return nil
+		written64, err = (*fr.Vector)(&t).WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []fp.Element:
-		// write slice length
-		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
-		if err != nil {
-			return
-		}
-		enc.n += 4
-		var buf [fp.Bytes]byte
-		for i := 0; i < len(t); i++ {
-			buf = t[i].Bytes()
-			written, err = enc.w.Write(buf[:])
-			enc.n += int64(written)
-			if err != nil {
-				return
-			}
-		}
-		return nil
-
+		written64, err = (*fp.Vector)(&t).WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []G1Affine:
 		// write slice length
 		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
@@ -496,7 +426,15 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 
 	// implementation note: code is a bit verbose (abusing code generation), but minimize allocations on the heap
 
+	var written64 int64
+	if vw, ok := v.(io.WriterTo); ok {
+		written64, err = vw.WriteTo(enc.w)
+		enc.n += written64
+		return
+	}
+
 	var written int
+
 	switch t := v.(type) {
 	case *fr.Element:
 		buf := t.Bytes()
@@ -518,58 +456,60 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 		written, err = enc.w.Write(buf[:])
 		enc.n += int64(written)
 		return
+	case fr.Vector:
+		written64, err = t.WriteTo(enc.w)
+		enc.n += written64
+		return
+	case fp.Vector:
+		written64, err = t.WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []fr.Element:
-		// write slice length
-		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
-		if err != nil {
-			return
-		}
-		enc.n += 4
-		var buf [fr.Bytes]byte
-		for i := 0; i < len(t); i++ {
-			buf = t[i].Bytes()
-			written, err = enc.w.Write(buf[:])
-			enc.n += int64(written)
-			if err != nil {
-				return
-			}
-		}
-		return nil
+		written64, err = (*fr.Vector)(&t).WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []fp.Element:
-		// write slice length
-		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
-		if err != nil {
-			return
-		}
-		enc.n += 4
-		var buf [fp.Bytes]byte
-		for i := 0; i < len(t); i++ {
-			buf = t[i].Bytes()
-			written, err = enc.w.Write(buf[:])
-			enc.n += int64(written)
-			if err != nil {
-				return
-			}
-		}
-		return nil
-
+		written64, err = (*fp.Vector)(&t).WriteTo(enc.w)
+		enc.n += written64
+		return
 	case []G1Affine:
 		// write slice length
 		err = binary.Write(enc.w, binary.BigEndian, uint32(len(t)))
 		if err != nil {
 			return
 		}
+
 		enc.n += 4
+		remain := len(t)
+		var bufs [bufSz][SizeOfG1AffineUncompressed]byte
 
-		var buf [SizeOfG1AffineUncompressed]byte
-
-		for i := 0; i < len(t); i++ {
-			buf = t[i].RawBytes()
-			written, err = enc.w.Write(buf[:])
+		offset := 0
+		for {
+			if remain == 0 {
+				break
+			}
+			toWrite := bufSz
+			if toWrite > remain {
+				toWrite = remain
+			}
+			remain -= toWrite
+			parallel.Execute(toWrite, func(start, end int) {
+				for i := start; i < end; i++ {
+					bufs[i] = t[i+offset].RawBytes()
+				}
+			})
+			var bufAll []byte
+			for i, _ := range bufs {
+				if i < toWrite {
+					bufAll = append(bufAll, bufs[i][:]...)
+				}
+			}
+			written, err = enc.w.Write(bufAll)
 			enc.n += int64(written)
 			if err != nil {
 				return
 			}
+			offset += toWrite
 		}
 		return nil
 	case []G2Affine:
@@ -579,16 +519,36 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 			return
 		}
 		enc.n += 4
+		remain := len(t)
+		var bufs [bufSz][SizeOfG2AffineUncompressed]byte
 
-		var buf [SizeOfG2AffineUncompressed]byte
-
-		for i := 0; i < len(t); i++ {
-			buf = t[i].RawBytes()
-			written, err = enc.w.Write(buf[:])
+		offset := 0
+		for {
+			if remain == 0 {
+				break
+			}
+			toWrite := bufSz
+			if toWrite > remain {
+				toWrite = remain
+			}
+			remain -= toWrite
+			parallel.Execute(toWrite, func(start, end int) {
+				for i := start; i < end; i++ {
+					bufs[i] = t[i+offset].RawBytes()
+				}
+			})
+			var bufAll []byte
+			for i, _ := range bufs {
+				if i < toWrite {
+					bufAll = append(bufAll, bufs[i][:]...)
+				}
+			}
+			written, err = enc.w.Write(bufAll)
 			enc.n += int64(written)
 			if err != nil {
 				return
 			}
+			offset += toWrite
 		}
 		return nil
 	default:
@@ -626,11 +586,11 @@ func (p *G1Affine) Unmarshal(buf []byte) error {
 //
 // we use the 2 most significant bits instead
 //
-//  00 -> uncompressed
-//  10 -> compressed, use smallest lexicographically square root of Y^2
-//  11 -> compressed, use largest lexicographically square root of Y^2
-//  01 -> compressed infinity point
-//  the "uncompressed infinity point" will just have 00 (uncompressed) followed by zeroes (infinity = 0,0 in affine coordinates)
+//	00 -> uncompressed
+//	10 -> compressed, use smallest lexicographically square root of Y^2
+//	11 -> compressed, use largest lexicographically square root of Y^2
+//	01 -> compressed infinity point
+//	the "uncompressed infinity point" will just have 00 (uncompressed) followed by zeroes (infinity = 0,0 in affine coordinates)
 func (p *G1Affine) Bytes() (res [SizeOfG1AffineCompressed]byte) {
 
 	// check if p is infinity point
@@ -638,9 +598,6 @@ func (p *G1Affine) Bytes() (res [SizeOfG1AffineCompressed]byte) {
 		res[0] = mCompressedInfinity
 		return
 	}
-
-	// tmp is used to convert from montgomery representation to regular
-	var tmp fp.Element
 
 	msbMask := mCompressedSmallest
 	// compressed, we need to know if Y is lexicographically bigger than -Y
@@ -650,12 +607,7 @@ func (p *G1Affine) Bytes() (res [SizeOfG1AffineCompressed]byte) {
 	}
 
 	// we store X  and mask the most significant word with our metadata mask
-	tmp = p.X
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[24:32], tmp[0])
-	binary.BigEndian.PutUint64(res[16:24], tmp[1])
-	binary.BigEndian.PutUint64(res[8:16], tmp[2])
-	binary.BigEndian.PutUint64(res[0:8], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[0:0+fp.Bytes]), p.X)
 
 	res[0] |= msbMask
 
@@ -674,25 +626,12 @@ func (p *G1Affine) RawBytes() (res [SizeOfG1AffineUncompressed]byte) {
 		return
 	}
 
-	// tmp is used to convert from montgomery representation to regular
-	var tmp fp.Element
-
 	// not compressed
 	// we store the Y coordinate
-	tmp = p.Y
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[56:64], tmp[0])
-	binary.BigEndian.PutUint64(res[48:56], tmp[1])
-	binary.BigEndian.PutUint64(res[40:48], tmp[2])
-	binary.BigEndian.PutUint64(res[32:40], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[32:32+fp.Bytes]), p.Y)
 
 	// we store X  and mask the most significant word with our metadata mask
-	tmp = p.X
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[24:32], tmp[0])
-	binary.BigEndian.PutUint64(res[16:24], tmp[1])
-	binary.BigEndian.PutUint64(res[8:16], tmp[2])
-	binary.BigEndian.PutUint64(res[0:8], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[0:0+fp.Bytes]), p.X)
 
 	res[0] |= mUncompressed
 
@@ -738,8 +677,12 @@ func (p *G1Affine) setBytes(buf []byte, subGroupCheck bool) (int, error) {
 	// uncompressed point
 	if mData == mUncompressed {
 		// read X and Y coordinates
-		p.X.SetBytes(buf[:fp.Bytes])
-		p.Y.SetBytes(buf[fp.Bytes : fp.Bytes*2])
+		if err := p.X.SetBytesCanonical(buf[:fp.Bytes]); err != nil {
+			return 0, err
+		}
+		if err := p.Y.SetBytesCanonical(buf[fp.Bytes : fp.Bytes*2]); err != nil {
+			return 0, err
+		}
 
 		// subgroup check
 		if subGroupCheck && !p.IsInSubGroup() {
@@ -759,7 +702,9 @@ func (p *G1Affine) setBytes(buf []byte, subGroupCheck bool) (int, error) {
 	bufX[0] &= ^mMask
 
 	// read X coordinate
-	p.X.SetBytes(bufX[:fp.Bytes])
+	if err := p.X.SetBytesCanonical(bufX[:fp.Bytes]); err != nil {
+		return 0, err
+	}
 
 	var YSquared, Y fp.Element
 
@@ -833,7 +778,7 @@ func (p *G1Affine) unsafeComputeY(subGroupCheck bool) error {
 // assumes buf[:8] mask is set to compressed
 // returns true if point is infinity and need no further processing
 // it sets X coordinate and uses Y for scratch space to store decompression metadata
-func (p *G1Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
+func (p *G1Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool, err error) {
 
 	// read the most significant byte
 	mData := buf[0] & mMask
@@ -842,7 +787,7 @@ func (p *G1Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
 		p.X.SetZero()
 		p.Y.SetZero()
 		isInfinity = true
-		return
+		return isInfinity, nil
 	}
 
 	// we need to copy the input buffer (to keep this method thread safe)
@@ -851,12 +796,14 @@ func (p *G1Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
 	bufX[0] &= ^mMask
 
 	// read X coordinate
-	p.X.SetBytes(bufX[:fp.Bytes])
+	if err := p.X.SetBytesCanonical(bufX[:fp.Bytes]); err != nil {
+		return false, err
+	}
 	// store mData in p.Y[0]
 	p.Y[0] = uint64(mData)
 
 	// recomputing Y will be done asynchronously
-	return
+	return isInfinity, nil
 }
 
 // SizeOfG2AffineCompressed represents the size in bytes that a G2Affine need in binary form, compressed
@@ -883,11 +830,11 @@ func (p *G2Affine) Unmarshal(buf []byte) error {
 //
 // we use the 2 most significant bits instead
 //
-//  00 -> uncompressed
-//  10 -> compressed, use smallest lexicographically square root of Y^2
-//  11 -> compressed, use largest lexicographically square root of Y^2
-//  01 -> compressed infinity point
-//  the "uncompressed infinity point" will just have 00 (uncompressed) followed by zeroes (infinity = 0,0 in affine coordinates)
+//	00 -> uncompressed
+//	10 -> compressed, use smallest lexicographically square root of Y^2
+//	11 -> compressed, use largest lexicographically square root of Y^2
+//	01 -> compressed infinity point
+//	the "uncompressed infinity point" will just have 00 (uncompressed) followed by zeroes (infinity = 0,0 in affine coordinates)
 func (p *G2Affine) Bytes() (res [SizeOfG2AffineCompressed]byte) {
 
 	// check if p is infinity point
@@ -895,9 +842,6 @@ func (p *G2Affine) Bytes() (res [SizeOfG2AffineCompressed]byte) {
 		res[0] = mCompressedInfinity
 		return
 	}
-
-	// tmp is used to convert from montgomery representation to regular
-	var tmp fp.Element
 
 	msbMask := mCompressedSmallest
 	// compressed, we need to know if Y is lexicographically bigger than -Y
@@ -908,19 +852,8 @@ func (p *G2Affine) Bytes() (res [SizeOfG2AffineCompressed]byte) {
 
 	// we store X  and mask the most significant word with our metadata mask
 	// p.X.A1 | p.X.A0
-	tmp = p.X.A0
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[56:64], tmp[0])
-	binary.BigEndian.PutUint64(res[48:56], tmp[1])
-	binary.BigEndian.PutUint64(res[40:48], tmp[2])
-	binary.BigEndian.PutUint64(res[32:40], tmp[3])
-
-	tmp = p.X.A1
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[24:32], tmp[0])
-	binary.BigEndian.PutUint64(res[16:24], tmp[1])
-	binary.BigEndian.PutUint64(res[8:16], tmp[2])
-	binary.BigEndian.PutUint64(res[0:8], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[32:32+fp.Bytes]), p.X.A0)
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[0:0+fp.Bytes]), p.X.A1)
 
 	res[0] |= msbMask
 
@@ -939,41 +872,16 @@ func (p *G2Affine) RawBytes() (res [SizeOfG2AffineUncompressed]byte) {
 		return
 	}
 
-	// tmp is used to convert from montgomery representation to regular
-	var tmp fp.Element
-
 	// not compressed
 	// we store the Y coordinate
 	// p.Y.A1 | p.Y.A0
-	tmp = p.Y.A0
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[120:128], tmp[0])
-	binary.BigEndian.PutUint64(res[112:120], tmp[1])
-	binary.BigEndian.PutUint64(res[104:112], tmp[2])
-	binary.BigEndian.PutUint64(res[96:104], tmp[3])
-
-	tmp = p.Y.A1
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[88:96], tmp[0])
-	binary.BigEndian.PutUint64(res[80:88], tmp[1])
-	binary.BigEndian.PutUint64(res[72:80], tmp[2])
-	binary.BigEndian.PutUint64(res[64:72], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[96:96+fp.Bytes]), p.Y.A0)
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[64:64+fp.Bytes]), p.Y.A1)
 
 	// we store X  and mask the most significant word with our metadata mask
 	// p.X.A1 | p.X.A0
-	tmp = p.X.A1
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[24:32], tmp[0])
-	binary.BigEndian.PutUint64(res[16:24], tmp[1])
-	binary.BigEndian.PutUint64(res[8:16], tmp[2])
-	binary.BigEndian.PutUint64(res[0:8], tmp[3])
-
-	tmp = p.X.A0
-	tmp.FromMont()
-	binary.BigEndian.PutUint64(res[56:64], tmp[0])
-	binary.BigEndian.PutUint64(res[48:56], tmp[1])
-	binary.BigEndian.PutUint64(res[40:48], tmp[2])
-	binary.BigEndian.PutUint64(res[32:40], tmp[3])
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[0:0+fp.Bytes]), p.X.A1)
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(res[32:32+fp.Bytes]), p.X.A0)
 
 	res[0] |= mUncompressed
 
@@ -1020,11 +928,19 @@ func (p *G2Affine) setBytes(buf []byte, subGroupCheck bool) (int, error) {
 	if mData == mUncompressed {
 		// read X and Y coordinates
 		// p.X.A1 | p.X.A0
-		p.X.A1.SetBytes(buf[:fp.Bytes])
-		p.X.A0.SetBytes(buf[fp.Bytes : fp.Bytes*2])
+		if err := p.X.A1.SetBytesCanonical(buf[:fp.Bytes]); err != nil {
+			return 0, err
+		}
+		if err := p.X.A0.SetBytesCanonical(buf[fp.Bytes : fp.Bytes*2]); err != nil {
+			return 0, err
+		}
 		// p.Y.A1 | p.Y.A0
-		p.Y.A1.SetBytes(buf[fp.Bytes*2 : fp.Bytes*3])
-		p.Y.A0.SetBytes(buf[fp.Bytes*3 : fp.Bytes*4])
+		if err := p.Y.A1.SetBytesCanonical(buf[fp.Bytes*2 : fp.Bytes*3]); err != nil {
+			return 0, err
+		}
+		if err := p.Y.A0.SetBytesCanonical(buf[fp.Bytes*3 : fp.Bytes*4]); err != nil {
+			return 0, err
+		}
 
 		// subgroup check
 		if subGroupCheck && !p.IsInSubGroup() {
@@ -1045,8 +961,12 @@ func (p *G2Affine) setBytes(buf []byte, subGroupCheck bool) (int, error) {
 
 	// read X coordinate
 	// p.X.A1 | p.X.A0
-	p.X.A1.SetBytes(bufX[:fp.Bytes])
-	p.X.A0.SetBytes(buf[fp.Bytes : fp.Bytes*2])
+	if err := p.X.A1.SetBytesCanonical(bufX[:fp.Bytes]); err != nil {
+		return 0, err
+	}
+	if err := p.X.A0.SetBytesCanonical(buf[fp.Bytes : fp.Bytes*2]); err != nil {
+		return 0, err
+	}
 
 	var YSquared, Y fptower.E2
 
@@ -1122,7 +1042,7 @@ func (p *G2Affine) unsafeComputeY(subGroupCheck bool) error {
 // assumes buf[:8] mask is set to compressed
 // returns true if point is infinity and need no further processing
 // it sets X coordinate and uses Y for scratch space to store decompression metadata
-func (p *G2Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
+func (p *G2Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool, err error) {
 
 	// read the most significant byte
 	mData := buf[0] & mMask
@@ -1131,7 +1051,7 @@ func (p *G2Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
 		p.X.SetZero()
 		p.Y.SetZero()
 		isInfinity = true
-		return
+		return isInfinity, nil
 	}
 
 	// we need to copy the input buffer (to keep this method thread safe)
@@ -1141,12 +1061,16 @@ func (p *G2Affine) unsafeSetCompressedBytes(buf []byte) (isInfinity bool) {
 
 	// read X coordinate
 	// p.X.A1 | p.X.A0
-	p.X.A1.SetBytes(bufX[:fp.Bytes])
-	p.X.A0.SetBytes(buf[fp.Bytes : fp.Bytes*2])
+	if err := p.X.A1.SetBytesCanonical(bufX[:fp.Bytes]); err != nil {
+		return false, err
+	}
+	if err := p.X.A0.SetBytesCanonical(buf[fp.Bytes : fp.Bytes*2]); err != nil {
+		return false, err
+	}
 
 	// store mData in p.Y.A0[0]
 	p.Y.A0[0] = uint64(mData)
 
 	// recomputing Y will be done asynchronously
-	return
+	return isInfinity, nil
 }

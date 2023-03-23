@@ -35,24 +35,6 @@ var (
 	ErrGenerator           = errors.New("wrong generator")
 )
 
-type Table []fr.Element
-
-// Len is the number of elements in the collection.
-func (t Table) Len() int {
-	return len(t)
-}
-
-// Less reports whether the element with
-// index i should sort before the element with index j.
-func (t Table) Less(i, j int) bool {
-	return t[i].Cmp(&t[j]) == -1
-}
-
-// Swap swaps the elements with indexes i and j.
-func (t Table) Swap(i, j int) {
-	t[i], t[j] = t[j], t[i]
-}
-
 // Proof Plookup proof, containing opening proofs
 type ProofLookupVector struct {
 
@@ -125,7 +107,8 @@ func evaluateAccumulationPolynomial(lf, lt, lh1, lh2 []fr.Element, beta, gamma f
 
 // evaluateNumBitReversed computes the evaluation (shifted, bit reversed) of h where
 // h = (x-1)*z*(1+\beta)*(\gamma+f)*(\gamma(1+\beta) + t+ \beta*t(gX)) -
-//		(x-1)*z(gX)*(\gamma(1+\beta) + h_{1} + \beta*h_{1}(gX))*(\gamma(1+\beta) + h_{2} + \beta*h_{2}(gX) )
+//
+//	(x-1)*z(gX)*(\gamma(1+\beta) + h_{1} + \beta*h_{1}(gX))*(\gamma(1+\beta) + h_{2} + \beta*h_{2}(gX) )
 //
 // * cz, ch1, ch2, ct, cf are the polynomials z, h1, h2, t, f in canonical basis
 // * _lz, _lh1, _lh2, _lt, _lf are the polynomials z, h1, h2, t, f in shifted Lagrange basis (domainBig)
@@ -370,8 +353,7 @@ func computeQuotientCanonical(alpha fr.Element, lh, lh0, lhn, lh1h2 []fr.Element
 // before generating a lookup proof), the commitment needs to be done on the
 // table sorted. Otherwise the commitment in proof.t will not be the same as
 // the public commitment: it will contain the same values, but permuted.
-//
-func ProveLookupVector(srs *kzg.SRS, f, t Table) (ProofLookupVector, error) {
+func ProveLookupVector(srs *kzg.SRS, f, t fr.Vector) (ProofLookupVector, error) {
 
 	// res
 	var proof ProofLookupVector
@@ -412,7 +394,7 @@ func ProveLookupVector(srs *kzg.SRS, f, t Table) (ProofLookupVector, error) {
 	for i := len(t); i < sizeDomainSmall; i++ {
 		lt[i] = t[len(t)-1]
 	}
-	sort.Sort(Table(lt))
+	sort.Sort(fr.Vector(lt))
 	copy(ct, lt)
 	copy(cf, lf)
 	domainSmall.FFTInverse(ct, fft.DIF)
@@ -429,7 +411,7 @@ func ProveLookupVector(srs *kzg.SRS, f, t Table) (ProofLookupVector, error) {
 	}
 
 	// write f sorted by t
-	lfSortedByt := make(Table, 2*domainSmall.Cardinality-1)
+	lfSortedByt := make(fr.Vector, 2*domainSmall.Cardinality-1)
 	copy(lfSortedByt, lt)
 	copy(lfSortedByt[domainSmall.Cardinality:], lf)
 	sort.Sort(lfSortedByt)
