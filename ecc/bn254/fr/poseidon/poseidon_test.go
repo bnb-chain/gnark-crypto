@@ -18,6 +18,18 @@ func elementFromHexString(v string) *fr.Element {
 	return &e
 }
 
+func TestPoseidonOne(t *testing.T) {
+	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
+	inputsStr := []string{"1"}
+	expectedHash := elementFromHexString("112A4F9241E384B0EDE4655E6D2BBF7EBD9595775DE9E7536DF87CD487852FC4")
+	inputs := make([]*fr.Element, len(inputsStr))
+	for i := 0; i < len(inputsStr); i++ {
+		inputs[i] = elementFromHexString(inputsStr[i])
+	}
+	actualHash := Poseidon(inputs...)
+	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
+}
+
 func TestPoseidonTwo(t *testing.T) {
 	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
 	inputsStr := []string{"1", "2"}
