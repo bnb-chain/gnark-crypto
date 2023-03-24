@@ -139,7 +139,8 @@ func Poseidon(input ...*fr.Element) *fr.Element {
 		deepCopy(state[1:], input[startIndex:lastIndex])
 		state = permutation(state[:remainigLength+1])
 	}
-	return state[0]
+	// Return capacity element 1
+	return state[1]
 }
 
 func PoseidonBytes(input ...[]byte) []byte {
