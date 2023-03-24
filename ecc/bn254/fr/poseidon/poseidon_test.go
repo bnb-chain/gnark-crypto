@@ -18,7 +18,7 @@ func elementFromHexString(v string) *fr.Element {
 	return &e
 }
 
-func TestPoseidonOne(t *testing.T) {
+func TestPoseidon1(t *testing.T) {
 	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
 	inputsStr := []string{"1"}
 	expectedHash := elementFromHexString("112A4F9241E384B0EDE4655E6D2BBF7EBD9595775DE9E7536DF87CD487852FC4")
@@ -30,7 +30,7 @@ func TestPoseidonOne(t *testing.T) {
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
-func TestPoseidonTwo(t *testing.T) {
+func TestPoseidon2(t *testing.T) {
 	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
 	inputsStr := []string{"1", "2"}
 	expectedHash := elementFromHexString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
@@ -42,10 +42,22 @@ func TestPoseidonTwo(t *testing.T) {
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
-func TestPoseidonFour(t *testing.T) {
+func TestPoseidon4(t *testing.T) {
 	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
 	inputsStr := []string{"1", "2", "3", "4"}
 	expectedHash := elementFromHexString("1148AAEF609AA338B27DAFD89BB98862D8BB2B429ACEAC47D86206154FFE053D")
+	inputs := make([]*fr.Element, len(inputsStr))
+	for i := 0; i < len(inputsStr); i++ {
+		inputs[i] = elementFromHexString(inputsStr[i])
+	}
+	actualHash := Poseidon(inputs...)
+	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
+}
+
+func TestPoseidon13(t *testing.T) {
+	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
+	inputsStr := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13"}
+	expectedHash := elementFromHexString("4EA9108A1551C780A7408570BDEAA3A0294B01F21198B72FF01545A60DA677F")
 	inputs := make([]*fr.Element, len(inputsStr))
 	for i := 0; i < len(inputsStr); i++ {
 		inputs[i] = elementFromHexString(inputsStr[i])
