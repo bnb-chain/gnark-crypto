@@ -8,59 +8,76 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func elementFromHexString(v string) *fr.Element {
-	n, success := new(big.Int).SetString(v, 16)
+func elementFromString(v string) *fr.Element {
+	n, success := new(big.Int).SetString(v, 10)
 	if !success {
 		panic("Error parsing hex number")
 	}
-	e := fr.Element{0, 0, 0, 0}
+	var e fr.Element
 	e.SetBigInt(n)
 	return &e
 }
 
 func TestPoseidon1(t *testing.T) {
-	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
-	inputsStr := []string{"1"}
-	expectedHash := elementFromHexString("112A4F9241E384B0EDE4655E6D2BBF7EBD9595775DE9E7536DF87CD487852FC4")
-	inputs := make([]*fr.Element, len(inputsStr))
-	for i := 0; i < len(inputsStr); i++ {
-		inputs[i] = elementFromHexString(inputsStr[i])
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("7764075183688725171230668857402392634761334547267776368103645048439717572548")
+	length := 1
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
 	}
 	actualHash := Poseidon(inputs...)
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
 func TestPoseidon2(t *testing.T) {
-	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
-	inputsStr := []string{"1", "2"}
-	expectedHash := elementFromHexString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
-	inputs := make([]*fr.Element, len(inputsStr))
-	for i := 0; i < len(inputsStr); i++ {
-		inputs[i] = elementFromHexString(inputsStr[i])
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("7142104613055408817911962100316808866448378443474503659992478482890339429929")
+	length := 2
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
 	}
 	actualHash := Poseidon(inputs...)
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
 func TestPoseidon4(t *testing.T) {
-	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
-	inputsStr := []string{"1", "2", "3", "4"}
-	expectedHash := elementFromHexString("1148AAEF609AA338B27DAFD89BB98862D8BB2B429ACEAC47D86206154FFE053D")
-	inputs := make([]*fr.Element, len(inputsStr))
-	for i := 0; i < len(inputsStr); i++ {
-		inputs[i] = elementFromHexString(inputsStr[i])
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("7817711165059374331357136443537800893307845083525445872661165200086166013245")
+	length := 4
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
 	}
 	actualHash := Poseidon(inputs...)
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
 func TestPoseidon13(t *testing.T) {
-	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
-	inputsStr := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13"}
-	expectedHash := elementFromHexString("4EA9108A1551C780A7408570BDEAA3A0294B01F21198B72FF01545A60DA677F")
-	inputs := make([]*fr.Element, len(inputsStr))
-	for i := 0; i < len(inputsStr); i++ {
-		inputs[i] = elementFromHexString(inputsStr[i])
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("1709610050961943784828399921362905178787999827108026634048665681910636069934")
+	length := 13
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
+	}
+	actualHash := Poseidon(inputs...)
+	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
+}
+
+func TestPoseidon16(t *testing.T) {
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("8319791455060392555425392842391403897548969645190976863995973180967774875286")
+	length := 16
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
 	}
 	actualHash := Poseidon(inputs...)
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
@@ -68,7 +85,7 @@ func TestPoseidon13(t *testing.T) {
 
 func TestPoseidon24(t *testing.T) {
 	// WARNING: No test vector to compare with
-	expectedHash := elementFromHexString("6C7676E83EF8CB9EF6C25746A5F6B2D39FBA4548B4C29B3D41490BBF3C1108D")
+	expectedHash := elementFromString("14281896993318141900551144554156181598834585543901557749703302979893059224887")
 	length := 24
 	inputs := make([]*fr.Element, length)
 	for i := 0; i < length; i++ {
@@ -79,10 +96,23 @@ func TestPoseidon24(t *testing.T) {
 	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
 }
 
-func TestPoseidonThirty(t *testing.T) {
+func TestPoseidon30(t *testing.T) {
 	// WARNING: No test vector to compare with
-	expectedHash := elementFromHexString("2FF47AB8E9E9F6134600A8DE8B8E99596E573620A7D8D39ED7B2C7CEF9F105F1")
+	expectedHash := elementFromString("3706864405066113783363062549980271879113588784557216652303342540436728346372")
 	length := 30
+	inputs := make([]*fr.Element, length)
+	for i := 0; i < length; i++ {
+		e := fr.NewElement((uint64)(i + 1))
+		inputs[i] = &e
+	}
+	actualHash := Poseidon(inputs...)
+	assert.True(t, actualHash.Equal(expectedHash), "%s != %s", actualHash, expectedHash)
+}
+
+func TestPoseidon256(t *testing.T) {
+	// WARNING: No test vector to compare with
+	expectedHash := elementFromString("3889232958018785041730045800798978544000060048890444628344970190264245196615")
+	length := 256
 	inputs := make([]*fr.Element, length)
 	for i := 0; i < length; i++ {
 		e := fr.NewElement((uint64)(i + 1))
@@ -98,7 +128,7 @@ func TestConsistency(t *testing.T) {
 	inputsStr := []string{"1", "2", "3", "4"}
 	inputs := make([]*fr.Element, len(inputsStr))
 	for i := 0; i < len(inputsStr); i++ {
-		inputs[i] = elementFromHexString(inputsStr[i])
+		inputs[i] = elementFromString(inputsStr[i])
 	}
 	actualHash1 := Poseidon(inputs...)
 	actualHash2 := Poseidon(inputs...)
@@ -107,7 +137,7 @@ func TestConsistency(t *testing.T) {
 
 func TestPoseidonBytes(t *testing.T) {
 	// Test vector https://extgit.iaik.tugraz.at/krypto/hadeshash/-/blob/master/code/test_vectors.txt
-	expectedHash := elementFromHexString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
+	expectedHash := elementFromString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
 	inputs := make([][]byte, 2)
 	inputs[0] = make([]byte, 1)
 	inputs[0][0] = 1
@@ -120,7 +150,7 @@ func TestPoseidonBytes(t *testing.T) {
 }
 
 func TestDigest(t *testing.T) {
-	expectedHash := elementFromHexString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
+	expectedHash := elementFromString("FCA49B798923AB0239DE1C9E7A4A9A2210312B6A2F616D18B5A87F9B628AE29")
 	hFunc := NewPoseidon()
 	inputs := make([][]byte, 2)
 	inputs[0] = make([]byte, 1)
