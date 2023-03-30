@@ -115,7 +115,7 @@ func Poseidon(input ...*fr.Element) *fr.Element {
 		panic("No support for dummy input")
 	}
 
-	const maxLength = 12
+	const maxLength = 16
 	state := make([]*fr.Element, maxLength+1)
 	state[0] = zeroElement()
 	startIndex := 0
@@ -132,14 +132,15 @@ func Poseidon(input ...*fr.Element) *fr.Element {
 		}
 	}
 
-	// For the remaining part of the input OR if 2 <= inputLength <= 12
+	// For the remaining part of the input OR if 1 <= inputLength <= 16
 	if lastIndex < inputLength {
 		lastIndex = inputLength
 		remainigLength := lastIndex - startIndex
 		deepCopy(state[1:], input[startIndex:lastIndex])
 		state = permutation(state[:remainigLength+1])
 	}
-	return state[0]
+	// Return capacity element 1
+	return state[1]
 }
 
 func PoseidonBytes(input ...[]byte) []byte {
