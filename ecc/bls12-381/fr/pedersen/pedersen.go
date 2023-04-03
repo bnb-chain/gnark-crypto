@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	curve "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"io"
 	"math/big"
 )
 
@@ -110,4 +112,37 @@ func (k *Key) VerifyKnowledgeProof(commitment bls12381.G1Affine, knowledgeProof 
 		return nil
 	}
 	return fmt.Errorf("proof rejected")
+}
+
+// WriteTo writes a binary representation of the domain (without the precomputed twiddle factors)
+// to the provided writer
+func (k *Key) WriteTo(w io.Writer) (int64, error) {
+
+	enc := curve.NewEncoder(w)
+
+	toEncode := []interface{}{&k.g, &k.gRootSigmaNeg, k.basisExpSigma, k.basis}
+
+	for _, v := range toEncode {
+		if err := enc.Encode(v); err != nil {
+			return enc.BytesWritten(), err
+		}
+	}
+
+	return enc.BytesWritten(), nil
+}
+
+// ReadFrom attempts to decode a domain from Reader
+func (k *Key) ReadFrom(r io.Reader, decOptions ...func(*curve.Decoder)) (int64, error) {
+
+	dec := curve.NewDecoder(r)
+
+	toDecode := []interface{}{&k.g, &k.gRootSigmaNeg, &k.basisExpSigma, &k.basis}
+
+	for _, v := range toDecode {
+		if err := dec.Decode(v); err != nil {
+			return dec.BytesRead(), err
+		}
+	}
+
+	return dec.BytesRead(), nil
 }
