@@ -18,14 +18,15 @@ package bn254
 
 import (
 	"bytes"
+	"fmt"
+	"github.com/leanovate/gopter"
+	"github.com/leanovate/gopter/prop"
 	"io"
 	"math/big"
 	"math/rand"
 	"reflect"
 	"testing"
-
-	"github.com/leanovate/gopter"
-	"github.com/leanovate/gopter/prop"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -147,6 +148,51 @@ func TestEncoder(t *testing.T) {
 	// decode them
 	testDecode(t, &buf, enc.BytesWritten())
 	testDecode(t, &bufRaw, encRaw.BytesWritten())
+
+}
+
+func TestEncLarge(t *testing.T) {
+	var inG []G1Affine
+	inG = make([]G1Affine, 1<<26)
+	var inD G1Affine
+	inD.ScalarMultiplication(&g1GenAff, new(big.Int).SetUint64(rand.Uint64()))
+	for i, _ := range inG {
+		inG[i] = inD
+	}
+	var buf bytes.Buffer
+	var bufRaw bytes.Buffer
+	enc := NewEncoder(&buf)
+	encRaw := NewEncoder(&bufRaw, RawEncoding())
+	toEncode := []interface{}{inG}
+	tm := time.Now()
+	for _, v := range toEncode {
+		if err := enc.Encode(v); err != nil {
+			t.Fatal(err)
+		}
+		if err := encRaw.Encode(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fmt.Println("time for enc:", time.Since(tm))
+	testDecode := func(t *testing.T, r io.Reader, n int64) {
+		dec := NewDecoder(r, NoSubgroupChecks())
+		var outG []G1Affine
+
+		toDecode := []interface{}{&outG}
+		for _, v := range toDecode {
+			if err := dec.Decode(v); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// decode them
+	tm = time.Now()
+	testDecode(t, &buf, enc.BytesWritten())
+	fmt.Println("time for dec:", time.Since(tm))
+	tm = time.Now()
+	testDecode(t, &bufRaw, encRaw.BytesWritten())
+	fmt.Println("time for decRaw:", time.Since(tm))
 
 }
 
