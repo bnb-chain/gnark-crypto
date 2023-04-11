@@ -156,7 +156,7 @@ func TestEncLarge(t *testing.T) {
 	inG = make([]G1Affine, 1<<26)
 	var inD G1Affine
 	inD.ScalarMultiplication(&g1GenAff, new(big.Int).SetUint64(rand.Uint64()))
-	for i, _ := range inG {
+	for i := range inG {
 		inG[i] = inD
 	}
 	var buf bytes.Buffer

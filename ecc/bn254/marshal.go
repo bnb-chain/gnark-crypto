@@ -653,7 +653,7 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 				}
 			})
 			var bufAll []byte
-			for i, _ := range bufs {
+			for i := range bufs {
 				if i < toWrite {
 					bufAll = append(bufAll, bufs[i][:]...)
 				}
@@ -692,7 +692,7 @@ func (enc *Encoder) encodeRaw(v interface{}) (err error) {
 				}
 			})
 			var bufAll []byte
-			for i, _ := range bufs {
+			for i := range bufs {
 				if i < toWrite {
 					bufAll = append(bufAll, bufs[i][:]...)
 				}
